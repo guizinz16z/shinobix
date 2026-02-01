@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ShinobiX — Animes</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <span class="logoDot"></span>
+      <span>ShinobiX</span>
+      <span class="badge">Animes</span>
+    </a>
+
+    <div class="search">
+      🔎 <input id="q" placeholder="Buscar anime, gênero..." autocomplete="off" />
+    </div>
+
+    <button class="btn" id="btnFavs">⭐ Favoritos</button>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div>
+        <h1>ShinobiX — assista e acompanhe seus animes.</h1>
+        <p>Catálogo com busca, página do anime, lista de episódios, player e favoritos. Visual roxo + ciano com vibe neon.</p>
+        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn primary" id="btnContinue">▶ Continuar</button>
+          <a class="btn" href="#catalogo">📚 Catálogo</a>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div style="color:var(--muted); font-size:12px; margin-bottom:8px;">Hoje no ShinobiX</div>
+        <div style="font-weight:1000; line-height:1.35">Top + Lançamentos + Favoritos</div>
+        <div style="color:var(--muted); margin-top:8px; line-height:1.5">
+          Dica: depois eu adiciono login, comentários e histórico por conta.
+        </div>
+      </div>
+    </section>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="all">Todos</button>
+      <button class="tab" data-tab="top">Top</button>
+      <button class="tab" data-tab="new">Lançamentos</button>
+      <button class="tab" data-tab="fav">Favoritos</button>
+    </div>
+
+    <div class="sectionHead">
+      <h2 id="catalogo">Catálogo</h2>
+      <div style="color:var(--muted); font-size:12px" id="count"></div>
+    </div>
+
+    <div id="list" class="grid"></div>
+
+    <div class="footer">© <span id="year"></span> ShinobiX • HTML/CSS/JS</div>
+  </main>
+
+  <div class="fab">
+    <a class="fabBtn" href="#catalogo"><span class="dot"></span> Voltar pro catálogo</a>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
