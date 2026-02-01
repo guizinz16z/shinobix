@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ShinobiX — Animes</title>
+  <title>ShinobiX — Mangás</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,41 +11,40 @@
     <a class="brand" href="index.html">
       <span class="logoDot"></span>
       <span>ShinobiX</span>
-      <span class="badge">Animes</span>
+      <span class="badge">Mangás</span>
     </a>
 
     <div class="search">
-      🔎 <input id="q" placeholder="Buscar anime, gênero..." autocomplete="off" />
+      🔎 <input id="q" placeholder="Buscar mangá..." autocomplete="off" />
     </div>
 
-    <button class="btn" id="btnFavs">⭐ Favoritos</button>
+    <button class="btn" id="btnHistory">📖 Histórico</button>
   </header>
 
   <main class="container">
     <section class="hero">
       <div>
-        <h1>ShinobiX — assista e acompanhe seus animes.</h1>
-        <p>Catálogo com busca, página do anime, lista de episódios, player e favoritos. Tudo puxando do AniList.</p>
+        <h1>ShinobiX — catálogo e leitor (MangaDex)</h1>
+        <p>Busque mangás, veja detalhes, escolha capítulos e leia com modo contínuo. Roxo + ciano neon.</p>
         <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn primary" id="btnContinue">▶ Continuar</button>
+          <button class="btn primary" id="btnContinue">▶ Continuar leitura</button>
           <a class="btn" href="#catalogo">📚 Catálogo</a>
         </div>
       </div>
 
       <div class="panel">
-        <div style="color:var(--muted); font-size:12px; margin-bottom:8px;">Hoje no ShinobiX</div>
-        <div style="font-weight:1000; line-height:1.35">Top + Lançamentos + Favoritos</div>
+        <div style="color:var(--muted); font-size:12px; margin-bottom:8px;">Dica</div>
+        <div style="font-weight:1000; line-height:1.35">Escolha idioma dos capítulos</div>
         <div style="color:var(--muted); margin-top:8px; line-height:1.5">
-          Dica: depois eu adiciono login, comentários e histórico por conta.
+          Por padrão eu deixei PT-BR e EN. Dá pra mudar no app.js.
         </div>
       </div>
     </section>
 
     <div class="tabs">
-      <button class="tab active" data-tab="all">Todos</button>
-      <button class="tab" data-tab="top">Top</button>
-      <button class="tab" data-tab="new">Lançamentos</button>
-      <button class="tab" data-tab="fav">Favoritos</button>
+      <button class="tab active" data-tab="popular">Populares</button>
+      <button class="tab" data-tab="search">Busca</button>
+      <button class="tab" data-tab="history">Histórico</button>
     </div>
 
     <div class="sectionHead">
@@ -55,7 +54,7 @@
 
     <div id="list" class="grid"></div>
 
-    <div class="footer">© <span id="year"></span> ShinobiX • HTML/CSS/JS + AniList</div>
+    <div class="footer">© <span id="year"></span> ShinobiX • MangaDex API</div>
   </main>
 
   <div class="fab">
