@@ -15,14 +15,19 @@ function lsSet(key, value){
 /** =========================
  *  CONFIG
  *  ========================= */
-const MD_API = "https://api.mangadex.org";
 
-// idiomas dos capítulos (mude como quiser)
+// ✅ Proxy CORS (para GitHub Pages)
+const MD_API = "https://corsproxy.io/?https://api.mangadex.org";
+
+// idiomas dos capítulos
 const LANGS = ["pt-br", "en"];
 
 // qualidade das páginas:
-// "data-saver" (leve) ou "data" (melhor qualidade)
 const QUALITY_DEFAULT = "data-saver";
+
+// limites (reduz rate-limit)
+const LIST_LIMIT = 20;      // catálogo
+const FEED_LIMIT = 100;     // capítulos (pode aumentar depois)
 
 /** =========================
  *  HELPERS
@@ -36,7 +41,7 @@ function showError(where, msg){
       <div style="font-weight:1000; margin-bottom:6px;">Ops…</div>
       <div style="color:var(--muted); line-height:1.5;">${msg}</div>
       <div style="color:var(--muted); margin-top:8px; font-size:12px;">
-        Se der erro 429, é limite de requisição. Espere um pouco e tente de novo.
+        Se aparecer erro 429, é limite de requisição. Espere um pouco e tente de novo.
       </div>
     </div>
   `;
@@ -57,65 +62,91 @@ function getRel(relationships, type){
 }
 
 function mdCoverUrl(mangaId, coverRel){
-  // coverRel.attributes.fileName costuma existir quando inclui "cover_art"
-  // url padrão (mangaId + filename) é amplamente usado em clients/implementações públicas
-  // (se você quiser 100% oficial, dá pra buscar covers via endpoint de cover e usar fileName)
   const fileName = coverRel?.attributes?.fileName;
   if(!fileName) return "";
   return `https://uploads.mangadex.org/covers/${mangaId}/${fileName}.256.jpg`;
 }
 
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
 /** =========================
  *  MangaDex API calls
  *  ========================= */
-async function mdGET(path, params = {}){
-  const u = new URL(MD_API + path);
+async function mdGET(path, params = {}, attempt = 0){
+  // Monta URL (repare que MD_API já tem proxy com "?https://api.mangadex.org")
+  const base = MD_API; // ex: https://corsproxy.io/?https://api.mangadex.org
+  const u = new URL(base);
+
+  // O proxy espera a URL completa após o '?'
+  // Então a URL final vira: https://corsproxy.io/?https://api.mangadex.org/rota?params...
+  const target = new URL("https://api.mangadex.org" + path);
+
   Object.entries(params).forEach(([k,v]) => {
     if(Array.isArray(v)){
-      v.forEach(item => u.searchParams.append(k, item));
+      v.forEach(item => target.searchParams.append(k, item));
     } else if(v !== null && v !== undefined && v !== ""){
-      u.searchParams.set(k, v);
+      target.searchParams.set(k, v);
     }
   });
 
-  const res = await fetch(u.toString());
-  if(!res.ok){
-    const txt = await res.text().catch(()=> "");
-    throw new Error(`MangaDex erro: ${res.status} ${txt.slice(0,120)}`);
+  // coloca a URL-alvo inteira depois do "?"
+  u.search = "?" + target.toString();
+
+  try{
+    const res = await fetch(u.toString(), {
+      method: "GET",
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+
+    if(!res.ok){
+      const txt = await res.text().catch(()=> "");
+      // retry em 429/5xx
+      if((res.status === 429 || res.status >= 500) && attempt < 2){
+        await sleep(700 + attempt * 600);
+        return mdGET(path, params, attempt + 1);
+      }
+      throw new Error(`MangaDex erro: ${res.status} ${txt.slice(0,120)}`);
+    }
+    return res.json();
+
+  } catch(err){
+    // retry em falha de rede
+    if(attempt < 2){
+      await sleep(700 + attempt * 600);
+      return mdGET(path, params, attempt + 1);
+    }
+    throw new Error("Failed to fetch (rede/CORS). Tente recarregar a página.");
   }
-  return res.json();
 }
 
 async function searchManga(title){
   return mdGET("/manga", {
     title,
-    limit: 40,
+    limit: LIST_LIMIT,
     "includes[]": ["cover_art"],
-    // ordenação “popular” (client-side dá pra melhorar, mas aqui já fica bom)
     "order[followedCount]": "desc"
   });
 }
 
 async function getPopularManga(){
   return mdGET("/manga", {
-    limit: 40,
+    limit: LIST_LIMIT,
     "includes[]": ["cover_art"],
     "order[followedCount]": "desc"
   });
 }
 
-// Feed de capítulos do mangá (usa ordem com brackets) 3
 async function getMangaFeed(mangaId){
   return mdGET(`/manga/${mangaId}/feed`, {
-    limit: 200,
+    limit: FEED_LIMIT,
     "translatedLanguage[]": LANGS,
     "order[chapter]": "desc",
     "order[volume]": "desc"
   });
 }
 
-// At-Home server: devolve baseUrl + chapter hash + data/dataSaver
-// E a URL final fica: baseUrl/{data|data-saver}/{hash}/{filename} 4
 async function getAtHome(chapterId){
   return mdGET(`/at-home/server/${chapterId}`);
 }
@@ -139,10 +170,8 @@ function toggleFav(id){
 }
 
 function setLastRead(obj){
-  // { mangaId, chapterId, title, chapterLabel, t }
   lsSet("shinobix_last_read", { ...obj, t: Date.now() });
 
-  // histórico simples (últimos 30)
   const hist = lsGet("shinobix_history", []);
   const cleaned = hist.filter(x => x.chapterId !== obj.chapterId);
   cleaned.unshift({ ...obj, t: Date.now() });
@@ -160,7 +189,8 @@ async function renderHome(){
   const list = $("#list");
   if(!list) return;
 
-  $("#year").textContent = new Date().getFullYear();
+  const yearEl = $("#year");
+  if(yearEl) yearEl.textContent = new Date().getFullYear();
 
   const q = $("#q");
   const count = $("#count");
@@ -201,17 +231,14 @@ async function renderHome(){
   async function load(){
     list.innerHTML = `<div class="panel" style="grid-column:1/-1">Carregando…</div>`;
     try{
-      let data;
-
       if(activeTab === "history"){
         const hist = lsGet("shinobix_history", []);
         if(!hist.length){
           list.innerHTML = `<div class="panel" style="grid-column:1/-1">Sem histórico ainda 📖</div>`;
-          count.textContent = "0 item(s)";
+          if(count) count.textContent = "0 item(s)";
           return;
         }
 
-        // mostra histórico como cards “fake” (link direto pro reader)
         list.innerHTML = hist.map(h => `
           <a class="card" href="reader.html?mangaId=${encodeURIComponent(h.mangaId)}&chapterId=${encodeURIComponent(h.chapterId)}">
             <div class="cardBody">
@@ -223,14 +250,15 @@ async function renderHome(){
             </div>
           </a>
         `).join("");
-        count.textContent = `${hist.length} item(s)`;
+        if(count) count.textContent = `${hist.length} item(s)`;
         return;
       }
 
+      let data;
       if(activeTab === "search"){
         if(!term){
           list.innerHTML = `<div class="panel" style="grid-column:1/-1">Digite algo na busca 🔎</div>`;
-          count.textContent = "0 item(s)";
+          if(count) count.textContent = "0 item(s)";
           return;
         }
         data = await searchManga(term);
@@ -240,7 +268,8 @@ async function renderHome(){
 
       const items = (data.data || []).map(mapManga);
       list.innerHTML = items.map(cardHTML).join("");
-      count.textContent = `${items.length} mangá(s)`;
+      if(count) count.textContent = `${items.length} mangá(s)`;
+
     } catch(err){
       showError(list, err.message || "Erro ao carregar.");
     }
@@ -294,7 +323,6 @@ async function renderManga(){
   titleEl.textContent = "Carregando…";
 
   try{
-    // pega manga detalhado (com cover)
     const md = await mdGET(`/manga/${id}`, { "includes[]": ["cover_art"] });
     const m = md.data;
 
@@ -312,28 +340,24 @@ async function renderManga(){
     metaEl.innerHTML = `${pill(year)}${pill(status)}${tags.map(pill).join("")}`;
     descEl.textContent = cleanDesc(m.attributes?.description?.["pt-br"] || m.attributes?.description?.["en"]);
 
-    // fav
     const refreshFav = () => { favBtn.textContent = isFav(id) ? "✅ Favorito" : "⭐ Favoritar"; };
     favBtn.addEventListener("click", () => { toggleFav(id); refreshFav(); });
     refreshFav();
 
-    // capítulos
     const feed = await getMangaFeed(id);
     const chapters = (feed.data || [])
-      .filter(ch => ch.attributes?.pages > 0) // evita capítulos “vazios”
+      .filter(ch => ch.attributes?.pages > 0)
       .map(ch => ({
         id: ch.id,
         chapter: ch.attributes?.chapter || "—",
         volume: ch.attributes?.volume || "—",
         title: ch.attributes?.title || "",
         lang: ch.attributes?.translatedLanguage || "",
-        pages: ch.attributes?.pages || 0,
-        publishAt: ch.attributes?.publishAt || ch.attributes?.createdAt || ""
+        pages: ch.attributes?.pages || 0
       }));
 
     if(chCountEl) chCountEl.textContent = `${chapters.length} capítulo(s)`;
 
-    // Mais recente (primeiro da lista, pois estamos em desc)
     const latest = chapters[0];
     readLatestBtn.addEventListener("click", () => {
       if(!latest){ alert("Sem capítulos disponíveis."); return; }
@@ -394,20 +418,21 @@ async function renderReader(){
 
   async function loadChapterList(){
     const feed = await getMangaFeed(mangaId);
-    // ordenação desc já vem pelo order[] (cap/vol)
-    chapterList = (feed.data || []).filter(ch => ch.attributes?.pages > 0).map(ch => ({
-      id: ch.id,
-      chapter: ch.attributes?.chapter || "—",
-      volume: ch.attributes?.volume || "—",
-      title: ch.attributes?.title || "",
-      lang: ch.attributes?.translatedLanguage || ""
-    }));
+    chapterList = (feed.data || [])
+      .filter(ch => ch.attributes?.pages > 0)
+      .map(ch => ({
+        id: ch.id,
+        chapter: ch.attributes?.chapter || "—",
+        volume: ch.attributes?.volume || "—",
+        title: ch.attributes?.title || "",
+        lang: ch.attributes?.translatedLanguage || ""
+      }));
   }
 
   function updateNav(){
     currentIndex = chapterList.findIndex(c => c.id === chapterId);
-    const prev = chapterList[currentIndex + 1]; // porque desc (índice maior = mais antigo)
-    const next = chapterList[currentIndex - 1]; // mais novo
+    const prev = chapterList[currentIndex + 1];
+    const next = chapterList[currentIndex - 1];
 
     prevBtn.disabled = !prev;
     nextBtn.disabled = !next;
@@ -436,16 +461,14 @@ async function renderReader(){
       const chTitle = ch.attributes?.title ? ` — ${ch.attributes.title}` : "";
       rt.textContent = `${chLabel}${chTitle}`;
 
-      // At-home: baseUrl + chapter hash + filenames 5
       const atHome = await getAtHome(chId);
       const baseUrl = atHome.baseUrl;
       const hash = atHome.chapter?.hash;
       const files = (quality === "data-saver") ? (atHome.chapter?.dataSaver || []) : (atHome.chapter?.data || []);
-      const mode = quality; // "data" ou "data-saver"
+      const mode = quality;
 
       const urls = files.map(fn => `${baseUrl}/${mode}/${hash}/${fn}`);
 
-      // salva histórico
       setLastRead({
         mangaId,
         chapterId: chId,
@@ -453,20 +476,17 @@ async function renderReader(){
         chapterLabel: chLabel
       });
 
-      // render páginas
       pagesEl.innerHTML = urls.map(u => `<img class="pageImg" loading="lazy" src="${u}" alt="page">`).join("");
 
-      // scroll pro topo
       window.scrollTo({ top: 0, behavior: "instant" });
-
       updateNav();
+
     } catch(err){
       showError(pagesEl, err.message || "Erro ao carregar capítulo.");
     }
   }
 
   try{
-    // pegar título do mangá (pra histórico ficar bonito)
     const md = await mdGET(`/manga/${mangaId}`);
     const title = pickTitle(md.data?.attributes?.title);
     lsSet("shinobix_tmp_manga_title", title);
@@ -474,6 +494,7 @@ async function renderReader(){
     await loadChapterList();
     updateNav();
     await loadChapter(chapterId);
+
   } catch(err){
     rt.textContent = err.message || "Erro no leitor.";
   }
