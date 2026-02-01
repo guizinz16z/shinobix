@@ -11,25 +11,30 @@ function lsGet(key, fallback){
 function lsSet(key, value){
   localStorage.setItem(key, JSON.stringify(value));
 }
-
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
 /** =========================
  *  CONFIG
  *  ========================= */
 
-// ✅ Proxy CORS (para GitHub Pages) — IMPORTANTE: termina só em ?url=
-const MD_API = "https://api.allorigins.win/raw?url=";
-
-// idiomas dos capítulos
+// Idiomas dos capítulos
 const LANGS = ["pt-br", "en"];
 
-// qualidade das páginas: "data" (melhor) ou "data-saver" (leve)
+// Qualidade das páginas
 const QUALITY_DEFAULT = "data-saver";
 
-// limites (reduz rate-limit)
-const LIST_LIMIT = 20;     // catálogo
-const FEED_LIMIT = 100;    // capítulos
+// Limites (reduz rate-limit)
+const LIST_LIMIT = 20;
+const FEED_LIMIT = 100;
+
+// ✅ Lista de proxies (se um falhar, tenta o outro)
+const PROXIES = [
+  // AllOrigins (precisa encode)
+  (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+
+  // Corsproxy (precisa encode, e usa ?<url>)
+  (url) => "https://corsproxy.io/?" + encodeURIComponent(url),
+];
 
 /** =========================
  *  HELPERS
@@ -70,9 +75,58 @@ function mdCoverUrl(mangaId, coverRel){
 }
 
 /** =========================
- *  MangaDex API calls (via AllOrigins)
+ *  MangaDex API (com fallback de proxy)
  *  ========================= */
-async function mdGET(path, params = {}, attempt = 0){
+async function fetchJsonWithFallback(targetUrl, attempt = 0){
+  let lastErr = null;
+
+  for(const makeProxy of PROXIES){
+    const url = makeProxy(targetUrl);
+
+    try{
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+
+      // retry em 429/5xx
+      if(!res.ok){
+        lastErr = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+
+      // ⚠️ Parse seguro (evita "Unexpected end of JSON input")
+      const txt = await res.text();
+
+      // resposta vazia/cortada -> tenta outro proxy
+      if(!txt || txt.trim().length < 2){
+        lastErr = new Error("Resposta vazia do proxy");
+        continue;
+      }
+
+      // se não parece JSON, provavelmente veio HTML/erro do proxy
+      const t = txt.trim();
+      const looksJson = t.startsWith("{") || t.startsWith("[");
+      if(!looksJson){
+        lastErr = new Error("Proxy retornou algo que não é JSON");
+        continue;
+      }
+
+      return JSON.parse(t);
+
+    } catch(err){
+      lastErr = err;
+      continue;
+    }
+  }
+
+  // Retry global (2 tentativas)
+  if(attempt < 2){
+    await sleep(900 + attempt * 700);
+    return fetchJsonWithFallback(targetUrl, attempt + 1);
+  }
+
+  throw lastErr || new Error("Falha ao buscar dados (proxy).");
+}
+
+async function mdGET(path, params = {}){
   const target = new URL("https://api.mangadex.org" + path);
 
   Object.entries(params).forEach(([k,v]) => {
@@ -83,31 +137,7 @@ async function mdGET(path, params = {}, attempt = 0){
     }
   });
 
-  // ✅ AllOrigins precisa da URL inteira ENCODED
-  const finalUrl = MD_API + encodeURIComponent(target.toString());
-
-  try{
-    const res = await fetch(finalUrl, { headers: { "Accept": "application/json" } });
-
-    if(!res.ok){
-      // retry para rate limit / instabilidade
-      if((res.status === 429 || res.status >= 500) && attempt < 2){
-        await sleep(900 + attempt * 700);
-        return mdGET(path, params, attempt + 1);
-      }
-      const txt = await res.text().catch(()=> "");
-      throw new Error(`MangaDex erro: ${res.status} ${txt.slice(0,120)}`);
-    }
-
-    return res.json();
-
-  } catch(err){
-    if(attempt < 2){
-      await sleep(900 + attempt * 700);
-      return mdGET(path, params, attempt + 1);
-    }
-    throw new Error("Failed to fetch (proxy). Recarregue e tente novamente.");
-  }
+  return fetchJsonWithFallback(target.toString());
 }
 
 async function searchManga(title){
@@ -137,7 +167,6 @@ async function getMangaFeed(mangaId){
 }
 
 async function getAtHome(chapterId){
-  // OBS: imagens do MangaDex (baseUrl) não precisam de proxy, só o JSON precisa
   return mdGET(`/at-home/server/${chapterId}`);
 }
 
@@ -259,7 +288,7 @@ async function renderHome(){
       if(count) count.textContent = `${items.length} mangá(s)`;
 
     } catch(err){
-      showError(list, err.message || "Erro ao carregar.");
+      showError(list, (err?.message || "Erro ao carregar."));
     }
   }
 
@@ -366,7 +395,7 @@ async function renderManga(){
     `).join("");
 
   } catch(err){
-    showError($(".twoCol") || chaptersEl, err.message || "Erro ao carregar mangá.");
+    showError($(".twoCol") || chaptersEl, (err?.message || "Erro ao carregar mangá."));
   }
 }
 
@@ -469,7 +498,7 @@ async function renderReader(){
       updateNav();
 
     } catch(err){
-      showError(pagesEl, err.message || "Erro ao carregar capítulo.");
+      showError(pagesEl, (err?.message || "Erro ao carregar capítulo."));
     }
   }
 
@@ -483,7 +512,7 @@ async function renderReader(){
     await loadChapter(chapterId);
 
   } catch(err){
-    rt.textContent = err.message || "Erro no leitor.";
+    rt.textContent = (err?.message || "Erro no leitor.");
   }
 }
 
