@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ShinobiX — Leitor</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .readerControls{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px}
+    .pages{display:grid; gap:12px; margin-top:14px}
+    .pageImg{
+      width:100%; height:auto; display:block;
+      border-radius: var(--br);
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.04);
+    }
+    .stickyMini{
+      position: sticky; top: 72px;
+      z-index: 9;
+      margin-top: 10px;
+      border-radius: var(--br);
+      padding: 12px;
+      background: rgba(10,12,26,.55);
+      border:1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(12px);
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <span class="logoDot"></span>
+      <span>ShinobiX</span>
+      <span class="badge">Leitor</span>
+    </a>
+    <div style="flex:1"></div>
+    <a class="btn" id="backToManga">⬅ Mangá</a>
+  </header>
+
+  <main class="container">
+    <div class="panel">
+      <div id="rt" style="font-weight:1000;">Carregando...</div>
+
+      <div class="stickyMini">
+        <div style="color:var(--muted); font-size:12px;">Controles</div>
+        <div class="readerControls">
+          <button class="btn small" id="prev">⏮ Capítulo anterior</button>
+          <button class="btn small primary" id="next">Próximo capítulo ⏭</button>
+          <button class="btn small" id="toggleMode">🪶 Data-saver</button>
+        </div>
+      </div>
+
+      <div id="pages" class="pages"></div>
+    </div>
+
+    <div class="footer">Se carregar lento, deixe Data-saver ligado.</div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
