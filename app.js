@@ -7,7 +7,7 @@ function getParam(name){
 
 function lsGet(key, fallback){
   try{ return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
-  catch(e){ return fallback; }
+  catch{ return fallback; }
 }
 function lsSet(key, value){
   localStorage.setItem(key, JSON.stringify(value));
@@ -31,27 +31,142 @@ function getLastWatch(){
   return lsGet("shinobix_last", null);
 }
 
+// ===== AniList GraphQL =====
+const ANILIST_URL = "https://graphql.anilist.co";
+
+async function anilist(query, variables){
+  const res = await fetch(ANILIST_URL, {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "Accept":"application/json" },
+    body: JSON.stringify({ query, variables })
+  });
+  if(!res.ok){
+    const txt = await res.text().catch(()=> "");
+    throw new Error(`AniList erro: ${res.status} ${txt.slice(0,120)}`);
+  }
+  return res.json();
+}
+
+async function fetchCatalog({ page=1, perPage=40, search="", sort="POPULARITY_DESC" } = {}){
+  const query = `
+  query ($page: Int, $perPage: Int, $search: String, $sort: [MediaSort]) {
+    Page(page: $page, perPage: $perPage) {
+      media(search: $search, type: ANIME, sort: $sort, isAdult: false) {
+        id
+        title { romaji english native }
+        coverImage { large medium }
+        bannerImage
+        description(asHtml: false)
+        episodes
+        seasonYear
+        averageScore
+        status
+        genres
+      }
+    }
+  }`;
+  const data = await anilist(query, {
+    page, perPage,
+    search: search || null,
+    sort: [sort]
+  });
+  return data.data.Page.media;
+}
+
+async function fetchAnimeById(id){
+  const query = `
+  query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+      id
+      title { romaji english native }
+      coverImage { extraLarge large medium }
+      bannerImage
+      description(asHtml: false)
+      episodes
+      seasonYear
+      averageScore
+      status
+      genres
+      studios(isMain: true) { nodes { name } }
+    }
+  }`;
+  const data = await anilist(query, { id: Number(id) });
+  return data.data.Media;
+}
+
+function pickTitle(t){
+  return t.english || t.romaji || t.native || "Sem título";
+}
+
+function cleanDesc(desc){
+  if(!desc) return "Sem descrição.";
+  return desc
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?i>/g, "")
+    .replace(/<\/?b>/g, "")
+    .replace(/<\/?em>/g, "")
+    .replace(/<\/?strong>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildEpisodes(media){
+  const total = Math.max(1, Number(media.episodes || 12));
+  const list = [];
+  for(let n=1; n<=total; n++){
+    list.push({
+      n,
+      title: `Episódio ${n}`,
+      src: "https://www.youtube.com/embed/dQw4w9WgXcQ"
+    });
+  }
+  return list;
+}
+
+function pill(text){ return `<span class="pill">${text}</span>`; }
+
 function cardHTML(a){
+  const title = a.titleText;
+  const year = a.seasonYear || "—";
+  const score = a.averageScore ? `⭐ ${Math.round(a.averageScore)/10}` : "⭐ —";
+  const status = a.statusText || "—";
+  const cover = a.cover;
+
   return `
     <a class="card" href="anime.html?id=${encodeURIComponent(a.id)}">
-      <img class="cover" src="${a.cover}" alt="${a.title}">
+      <img class="cover" src="${cover}" alt="${title}">
       <div class="cardBody">
-        <div class="title">${a.title}</div>
+        <div class="title">${title}</div>
         <div class="meta">
-          <span class="pill">${a.year}</span>
-          <span class="pill">${a.status}</span>
-          <span class="pill">⭐ ${a.rating}</span>
+          ${pill(year)}
+          ${pill(status)}
+          ${pill(score)}
         </div>
       </div>
     </a>
   `;
 }
 
-function renderHome(){
+function showError(where, msg){
+  if(!where) return;
+  where.innerHTML = `
+    <div class="panel">
+      <div style="font-weight:1000; margin-bottom:6px;">Ops…</div>
+      <div style="color:var(--muted); line-height:1.5;">${msg}</div>
+      <div style="color:var(--muted); margin-top:8px; font-size:12px;">
+        Se aparecer erro 429, é limite de requisições. Espere um pouco e recarregue.
+      </div>
+    </div>
+  `;
+}
+
+// ===== HOME =====
+async function renderHome(){
   const list = $("#list");
   if(!list) return;
 
-  $("#year").textContent = new Date().getFullYear();
+  const yearEl = $("#year");
+  if(yearEl) yearEl.textContent = new Date().getFullYear();
 
   const q = $("#q");
   const count = $("#count");
@@ -62,119 +177,149 @@ function renderHome(){
   let activeTab = "all";
   let term = "";
 
-  function getItems(){
-    const all = window.ANIMES.slice();
-
-    // filtro por busca
-    let items = all.filter(a => {
-      if(!term) return true;
-      const hay = (a.title + " " + a.genres.join(" ") + " " + a.status).toLowerCase();
-      return hay.includes(term);
-    });
-
-    // tabs
-    if(activeTab === "top"){
-      items = items.sort((a,b) => (b.rating||0) - (a.rating||0)).slice(0, 10);
-    }
-    if(activeTab === "new"){
-      items = items.sort((a,b) => (b.year||0) - (a.year||0));
-    }
-    if(activeTab === "fav"){
-      const favs = lsGet("shinobix_favs", []);
-      items = items.filter(a => favs.includes(a.id));
-    }
-
-    return items;
+  function mapMedia(m){
+    return {
+      id: m.id,
+      titleText: pickTitle(m.title),
+      cover: m.coverImage?.large || m.coverImage?.medium || "",
+      seasonYear: m.seasonYear,
+      averageScore: m.averageScore,
+      statusText: (m.status || "").replaceAll("_"," ").toLowerCase()
+    };
   }
 
-  function draw(){
-    const items = getItems();
-    list.innerHTML = items.map(cardHTML).join("");
-    count.textContent = `${items.length} anime(s)`;
+  async function load(){
+    list.innerHTML = `<div class="panel" style="grid-column:1/-1">Carregando catálogo…</div>`;
+    try{
+      if(activeTab === "fav"){
+        const favs = lsGet("shinobix_favs", []);
+        if(!favs.length){
+          list.innerHTML = `<div class="panel" style="grid-column:1/-1">Você ainda não favoritou nada ⭐</div>`;
+          if(count) count.textContent = "0 anime(s)";
+          return;
+        }
+        const media = await fetchCatalog({ search: term, sort: "POPULARITY_DESC" });
+        const items = media.map(mapMedia).filter(a => favs.includes(a.id));
+        list.innerHTML = items.map(cardHTML).join("");
+        if(count) count.textContent = `${items.length} anime(s)`;
+        return;
+      }
+
+      let sort = "POPULARITY_DESC";
+      if(activeTab === "top") sort = "SCORE_DESC";
+      if(activeTab === "new") sort = "START_DATE_DESC";
+
+      const media = await fetchCatalog({ search: term, sort });
+      const items = media.map(mapMedia);
+
+      list.innerHTML = items.map(cardHTML).join("");
+      if(count) count.textContent = `${items.length} anime(s)`;
+    } catch(err){
+      showError(list, (err?.message || "Erro ao carregar API."));
+    }
   }
 
-  tabs.forEach(t => t.addEventListener("click", () => {
-    tabs.forEach(x => x.classList.remove("active"));
-    t.classList.add("active");
-    activeTab = t.dataset.tab;
-    draw();
-  }));
+  function setTab(tab){
+    activeTab = tab;
+    tabs.forEach(x => x.classList.toggle("active", x.dataset.tab === tab));
+    load();
+  }
 
-  q.addEventListener("input", () => {
-    term = q.value.trim().toLowerCase();
-    draw();
+  tabs.forEach(t => t.addEventListener("click", () => setTab(t.dataset.tab)));
+
+  q?.addEventListener("input", () => {
+    term = q.value.trim();
+    clearTimeout(window.__sx);
+    window.__sx = setTimeout(load, 450);
   });
 
-  btnFavs.addEventListener("click", () => {
-    activeTab = "fav";
-    tabs.forEach(x => x.classList.toggle("active", x.dataset.tab === "fav"));
-    draw();
+  btnFavs?.addEventListener("click", () => {
+    setTab("fav");
     location.hash = "#catalogo";
   });
 
-  btnContinue.addEventListener("click", () => {
+  btnContinue?.addEventListener("click", () => {
     const last = getLastWatch();
     if(!last){ alert("Você ainda não assistiu nada 🙂"); return; }
     location.href = `player.html?id=${encodeURIComponent(last.animeId)}&ep=${encodeURIComponent(last.ep)}`;
   });
 
-  draw();
+  load();
 }
 
-function renderAnime(){
-  const title = $("#title");
-  const cover = $("#cover");
-  const meta = $("#meta");
-  const desc = $("#desc");
-  const eps = $("#eps");
-  if(!title || !cover || !meta || !desc || !eps) return;
+// ===== ANIME PAGE =====
+async function renderAnime(){
+  const titleEl = $("#title");
+  const coverEl = $("#cover");
+  const metaEl = $("#meta");
+  const descEl = $("#desc");
+  const epsEl = $("#eps");
+  const epCount = $("#epCount");
+  const watch1 = $("#watch1");
+  const favBtn = $("#favBtn");
+
+  if(!titleEl || !coverEl || !metaEl || !descEl || !epsEl) return;
 
   const id = getParam("id");
-  const a = window.ANIMES.find(x => x.id === id);
-
-  if(!a){
-    title.textContent = "Anime não encontrado";
-    desc.textContent = "Volte para o catálogo e selecione um anime.";
+  if(!id){
+    titleEl.textContent = "Anime não encontrado";
+    descEl.textContent = "Volte para o catálogo.";
     return;
   }
 
-  document.title = `ShinobiX — ${a.title}`;
-  cover.src = a.cover;
-  title.textContent = a.title;
-  desc.textContent = a.desc;
+  titleEl.textContent = "Carregando…";
 
-  meta.innerHTML = `
-    <span class="pill">${a.year}</span>
-    <span class="pill">${a.status}</span>
-    <span class="pill">⭐ ${a.rating}</span>
-    ${a.genres.map(g => `<span class="pill">${g}</span>`).join("")}
-  `;
+  try{
+    const m = await fetchAnimeById(id);
+    const title = pickTitle(m.title);
+    document.title = `ShinobiX — ${title}`;
 
-  $("#watch1").href = `player.html?id=${encodeURIComponent(a.id)}&ep=1`;
+    coverEl.src = m.bannerImage || m.coverImage?.extraLarge || m.coverImage?.large || "";
+    titleEl.textContent = title;
 
-  const favBtn = $("#favBtn");
-  function refreshFav(){
-    favBtn.textContent = isFav(a.id) ? "✅ Favorito" : "⭐ Favoritar";
-  }
-  favBtn.addEventListener("click", () => {
-    toggleFav(a.id);
+    const year = m.seasonYear || "—";
+    const score = m.averageScore ? `⭐ ${Math.round(m.averageScore)/10}` : "⭐ —";
+    const status = (m.status || "").replaceAll("_"," ").toLowerCase() || "—";
+    const studios = m.studios?.nodes?.map(s => s.name).slice(0,2).join(", ");
+
+    metaEl.innerHTML = `
+      ${pill(year)}
+      ${pill(status)}
+      ${pill(score)}
+      ${studios ? pill(studios) : ""}
+      ${(m.genres || []).slice(0,4).map(g => pill(g)).join("")}
+    `;
+
+    descEl.textContent = cleanDesc(m.description);
+
+    const episodes = buildEpisodes(m);
+    if(epCount) epCount.textContent = `${episodes.length} episódio(s)`;
+
+    if(watch1) watch1.href = `player.html?id=${encodeURIComponent(m.id)}&ep=1`;
+
+    function refreshFav(){
+      if(!favBtn) return;
+      favBtn.textContent = isFav(m.id) ? "✅ Favorito" : "⭐ Favoritar";
+    }
+    favBtn?.addEventListener("click", () => { toggleFav(m.id); refreshFav(); });
     refreshFav();
-  });
-  refreshFav();
 
-  $("#epCount").textContent = `${a.episodes.length} episódio(s)`;
+    epsEl.innerHTML = episodes.map(ep => `
+      <a class="card" href="player.html?id=${encodeURIComponent(m.id)}&ep=${ep.n}">
+        <div class="cardBody">
+          <div class="title">Episódio ${ep.n}</div>
+          <div class="meta">${pill(ep.title)}</div>
+        </div>
+      </a>
+    `).join("");
 
-  eps.innerHTML = a.episodes.map(ep => `
-    <a class="card" href="player.html?id=${encodeURIComponent(a.id)}&ep=${ep.n}">
-      <div class="cardBody">
-        <div class="title">Episódio ${ep.n}</div>
-        <div class="meta"><span class="pill">${ep.title}</span></div>
-      </div>
-    </a>
-  `).join("");
+  } catch(err){
+    showError($(".twoCol") || epsEl, (err?.message || "Erro ao carregar anime."));
+  }
 }
 
-function renderPlayer(){
+// ===== PLAYER =====
+async function renderPlayer(){
   const frame = $("#frame");
   const ptitle = $("#ptitle");
   const back = $("#back");
@@ -185,37 +330,51 @@ function renderPlayer(){
   const id = getParam("id");
   let epN = Number(getParam("ep") || "1");
 
-  const a = window.ANIMES.find(x => x.id === id);
-  if(!a){ ptitle.textContent = "Anime não encontrado"; return; }
-
-  back.href = `anime.html?id=${encodeURIComponent(id)}`;
-
-  function load(epNumber){
-    const ep = a.episodes.find(e => e.n === epNumber);
-    if(!ep){
-      ptitle.textContent = "Episódio não encontrado";
-      frame.src = "";
-      return;
-    }
-    epN = epNumber;
-    document.title = `ShinobiX — ${a.title} Ep ${ep.n}`;
-    ptitle.textContent = `${a.title} — Ep ${ep.n}: ${ep.title}`;
-    frame.src = ep.src;
-
-    setLastWatch(a.id, ep.n);
-
-    prev.disabled = epN <= 1;
-    next.disabled = epN >= a.episodes.length;
-    prev.style.opacity = prev.disabled ? .55 : 1;
-    next.style.opacity = next.disabled ? .55 : 1;
+  if(!id){
+    ptitle.textContent = "Anime não encontrado";
+    return;
   }
 
-  prev.addEventListener("click", () => load(epN - 1));
-  next.addEventListener("click", () => load(epN + 1));
+  ptitle.textContent = "Carregando…";
 
-  load(epN);
+  try{
+    const m = await fetchAnimeById(id);
+    const title = pickTitle(m.title);
+    const episodes = buildEpisodes(m);
+
+    back.href = `anime.html?id=${encodeURIComponent(id)}`;
+
+    function load(n){
+      const ep = episodes.find(e => e.n === n);
+      if(!ep){
+        ptitle.textContent = "Episódio não encontrado";
+        frame.src = "";
+        return;
+      }
+      epN = n;
+      document.title = `ShinobiX — ${title} Ep ${ep.n}`;
+      ptitle.textContent = `${title} — Ep ${ep.n}`;
+      frame.src = ep.src;
+
+      setLastWatch(m.id, ep.n);
+
+      prev.disabled = epN <= 1;
+      next.disabled = epN >= episodes.length;
+      prev.style.opacity = prev.disabled ? .55 : 1;
+      next.style.opacity = next.disabled ? .55 : 1;
+    }
+
+    prev.addEventListener("click", () => load(epN - 1));
+    next.addEventListener("click", () => load(epN + 1));
+
+    load(epN);
+
+  } catch(err){
+    ptitle.textContent = err?.message || "Erro ao carregar player.";
+  }
 }
 
+// Executa conforme a página
 renderHome();
 renderAnime();
 renderPlayer();
