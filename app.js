@@ -12,22 +12,24 @@ function lsSet(key, value){
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
 /** =========================
  *  CONFIG
  *  ========================= */
 
-// ✅ Proxy CORS (para GitHub Pages)
-const MD_API = "https://api.allorigins.win/raw?url=https://api.mangadex.org";
+// ✅ Proxy CORS (para GitHub Pages) — IMPORTANTE: termina só em ?url=
+const MD_API = "https://api.allorigins.win/raw?url=";
 
 // idiomas dos capítulos
 const LANGS = ["pt-br", "en"];
 
-// qualidade das páginas:
+// qualidade das páginas: "data" (melhor) ou "data-saver" (leve)
 const QUALITY_DEFAULT = "data-saver";
 
 // limites (reduz rate-limit)
-const LIST_LIMIT = 20;      // catálogo
-const FEED_LIMIT = 100;     // capítulos (pode aumentar depois)
+const LIST_LIMIT = 20;     // catálogo
+const FEED_LIMIT = 100;    // capítulos
 
 /** =========================
  *  HELPERS
@@ -67,18 +69,10 @@ function mdCoverUrl(mangaId, coverRel){
   return `https://uploads.mangadex.org/covers/${mangaId}/${fileName}.256.jpg`;
 }
 
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
-
 /** =========================
- *  MangaDex API calls
+ *  MangaDex API calls (via AllOrigins)
  *  ========================= */
 async function mdGET(path, params = {}, attempt = 0){
-  // Monta URL (repare que MD_API já tem proxy com "?https://api.mangadex.org")
-  const base = MD_API; // ex: https://corsproxy.io/?https://api.mangadex.org
-  const u = new URL(base);
-
-  // O proxy espera a URL completa após o '?'
-  // Então a URL final vira: https://corsproxy.io/?https://api.mangadex.org/rota?params...
   const target = new URL("https://api.mangadex.org" + path);
 
   Object.entries(params).forEach(([k,v]) => {
@@ -89,35 +83,30 @@ async function mdGET(path, params = {}, attempt = 0){
     }
   });
 
-  // coloca a URL-alvo inteira depois do "?"
-  u.search = "?" + target.toString();
+  // ✅ AllOrigins precisa da URL inteira ENCODED
+  const finalUrl = MD_API + encodeURIComponent(target.toString());
 
   try{
-    const res = await fetch(u.toString(), {
-      method: "GET",
-      headers: {
-        "Accept": "application/json"
-      }
-    });
+    const res = await fetch(finalUrl, { headers: { "Accept": "application/json" } });
 
     if(!res.ok){
-      const txt = await res.text().catch(()=> "");
-      // retry em 429/5xx
+      // retry para rate limit / instabilidade
       if((res.status === 429 || res.status >= 500) && attempt < 2){
-        await sleep(700 + attempt * 600);
+        await sleep(900 + attempt * 700);
         return mdGET(path, params, attempt + 1);
       }
+      const txt = await res.text().catch(()=> "");
       throw new Error(`MangaDex erro: ${res.status} ${txt.slice(0,120)}`);
     }
+
     return res.json();
 
   } catch(err){
-    // retry em falha de rede
     if(attempt < 2){
-      await sleep(700 + attempt * 600);
+      await sleep(900 + attempt * 700);
       return mdGET(path, params, attempt + 1);
     }
-    throw new Error("Failed to fetch (rede/CORS). Tente recarregar a página.");
+    throw new Error("Failed to fetch (proxy). Recarregue e tente novamente.");
   }
 }
 
@@ -148,6 +137,7 @@ async function getMangaFeed(mangaId){
 }
 
 async function getAtHome(chapterId){
+  // OBS: imagens do MangaDex (baseUrl) não precisam de proxy, só o JSON precisa
   return mdGET(`/at-home/server/${chapterId}`);
 }
 
@@ -204,13 +194,11 @@ async function renderHome(){
   function mapManga(m){
     const id = m.id;
     const title = pickTitle(m.attributes?.title);
-    const desc = cleanDesc(m.attributes?.description?.["pt-br"] || m.attributes?.description?.["en"]);
     const status = (m.attributes?.status || "—").toLowerCase();
     const year = m.attributes?.year || "—";
     const coverRel = getRel(m.relationships, "cover_art");
     const cover = mdCoverUrl(id, coverRel) || "";
-
-    return { id, title, desc, status, year, cover };
+    return { id, title, status, year, cover };
   }
 
   function cardHTML(a){
@@ -424,15 +412,14 @@ async function renderReader(){
         id: ch.id,
         chapter: ch.attributes?.chapter || "—",
         volume: ch.attributes?.volume || "—",
-        title: ch.attributes?.title || "",
-        lang: ch.attributes?.translatedLanguage || ""
+        title: ch.attributes?.title || ""
       }));
   }
 
   function updateNav(){
     currentIndex = chapterList.findIndex(c => c.id === chapterId);
-    const prev = chapterList[currentIndex + 1];
-    const next = chapterList[currentIndex - 1];
+    const prev = chapterList[currentIndex + 1]; // mais antigo
+    const next = chapterList[currentIndex - 1]; // mais novo
 
     prevBtn.disabled = !prev;
     nextBtn.disabled = !next;
