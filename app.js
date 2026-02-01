@@ -17,7 +17,7 @@ function lsSet(key, value){
  *  ========================= */
 
 // ✅ Proxy CORS (para GitHub Pages)
-const MD_API = "https://corsproxy.io/?https://api.mangadex.org";
+const MD_API = "https://api.allorigins.win/raw?url=https://api.mangadex.org";
 
 // idiomas dos capítulos
 const LANGS = ["pt-br", "en"];
